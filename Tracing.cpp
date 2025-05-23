@@ -15,49 +15,42 @@
 #include <Commdlg.h>
 #include <exception>
 
-
 using namespace std;
 
-//Plugin module hinstance, used to locate resources
+// 插件模块实例句柄，用于定位资源
 HINSTANCE hInst;
-//used to set the main dialog icon
+// 用于设置主对话框图标
 HICON main_icon;
 
+// 全局标志
+bool LoggingActive;         // 日志记录是否活跃
+// 事件列表
+vector<string> Events;      // 存储追踪事件的向量
 
-//Global FLAG
-bool LoggingActive;
-//Events list
-vector<string> Events;
-
-//Stopping VA
+// 停止VA（虚拟地址）
 long long EndVA;
 
-//Handle of the main dialog
+// 主对话框句柄
 HWND TracerWHandle;
-//Name of the target module, retrieved when start button is clicked !
+// 目标模块名称，在点击开始按钮时获取
 string TaregtModule;
-//Is main dialog shown or not ?
+// 主对话框是否显示
 bool FormDisplayed = false;
-//used to display messages and alerts !
+// 用于显示消息和警告
 const WCHAR* MessageBoxTitle = L"x64_Tracer";
 
-//indcates if we can calc file offset in target module or not ?
+// 指示是否可以计算目标模块中的文件偏移
 bool IsFileOffsetPossible;
 
-
-
-
-
-
-
+// 将64位长整数转换为十六进制字符串
 string Int64ToHexString ( long long Number )
 {
- 
 	ostringstream ss;
 	ss << std::hex << Number;
 	return ss.str();
 }
 
+// 将指针指向的64位值转换为十六进制字符串
 string Int64ToHexString ( void* Number )
 {
 	ostringstream ss;
@@ -65,6 +58,7 @@ string Int64ToHexString ( void* Number )
 	return ss.str();
 }
 
+// 将32位整数转换为十六进制字符串
 string Int32ToHexString ( int Number )
 {
 	ostringstream ss;
@@ -72,6 +66,7 @@ string Int32ToHexString ( int Number )
 	return ss.str();
 }
 
+// 显示保存文件对话框
 bool SaveFileDialog(char Buffer[MAX_PATH])
 {
 	OPENFILENAMEA sSaveFileName;
@@ -82,10 +77,8 @@ bool SaveFileDialog(char Buffer[MAX_PATH])
 	const char szFilterString[] = "Text files (*.txt, *.log)\0*.txt;*.log\0All Files (*.*)\0*.*\0\0";
 	const char szDialogTitle[] = "Select dump file...";
 
-
 	sSaveFileName.lStructSize = sizeof(sSaveFileName);
 	sSaveFileName.lpstrFilter = szFilterString;
-
 
 	sSaveFileName.lpstrFile = Buffer;
 	sSaveFileName.nMaxFile = MAX_PATH;
@@ -96,17 +89,20 @@ bool SaveFileDialog(char Buffer[MAX_PATH])
 	return (FALSE != GetSaveFileNameA(&sSaveFileName));
 }
 
+// 检查结束地址的有效性
 bool CheckENDAddress(HWND hWnd)
 {
-
 	CHAR buffer[1024];
 
 	ZeroMemory(&buffer,sizeof(buffer));
 
+	// 从文本框获取结束地址
 	GetWindowTextA(GetDlgItem(hWnd, IDC_EDITEndAddress), buffer, sizeof(buffer));
 
+	// 将字符串转换为数值
 	EndVA = DbgValFromString(buffer);
 
+	// 验证表达式有效性和数值大于0
 	if(DbgIsValidExpression(buffer)  && EndVA > 0)
 	{
 		return true;
@@ -115,17 +111,19 @@ bool CheckENDAddress(HWND hWnd)
 	return false;
 }
 
+// 检查模块名称的有效性
 bool CheckModuleName(HWND hWnd)
 {
-
 	CHAR buffer[1024];
 
 	ZeroMemory(&buffer,sizeof(buffer));
 
+	// 从文本框获取模块名称
 	GetWindowTextA(GetDlgItem(hWnd, IDC_EDITModule), buffer, sizeof(buffer));
 
 	TaregtModule = string(buffer);
 
+	// 检查模块名称长度是否大于1
 	if(TaregtModule.length() > 1)
 	{
 		return true;
@@ -134,10 +132,9 @@ bool CheckModuleName(HWND hWnd)
 	return false;
 }
 
-//returns if check box is toggled or not ?
+// 返回复选框是否被选中（用于禁用GUI）
 bool ShouldDisableGUI()
 {
- 
 	HWND CheckBoxHandle = GetDlgItem(TracerWHandle, IDC_CHECKGUI);
 
 	long IsChecked = (SendMessage(CheckBoxHandle, BM_GETCHECK, 0, 0));
@@ -148,44 +145,22 @@ bool ShouldDisableGUI()
 	}
 
 	return false;
-
 }
 
-
-
-
-
-
-
-
-
-
-
-
-//Convert VA to RVA
-//64 bit
+// 将VA转换为RVA（相对虚拟地址）
+// 64位版本
 DWORD VAtoRVA(duint VA, duint ImageBase)
 {
-
 	return (DWORD)(VA - ImageBase);
-
 }
-//32 bit 
-//DWORD VAtoRVA(UINT32 VA, UINT32 ImageBase)
-//{
-//
-//	return (DWORD)(VA - ImageBase);
-//
-//}
 
-
-
-//32
+// 将RVA转换为文件偏移（FOA）
+// 32位版本
 ULONG RVA2FOA(DWORD ulRVA, PIMAGE_NT_HEADERS32 pNTHeader, IMAGE_SECTION_HEADER* SectionHeaders )
 {
-
     int local = 0;
     
+    // 遍历所有节头，找到包含该RVA的节
     for(int i = 0; i < pNTHeader->FileHeader.NumberOfSections; i++)
     {
         if ( (ulRVA >= SectionHeaders[i].VirtualAddress) && (ulRVA <= SectionHeaders[i].VirtualAddress + SectionHeaders[i].SizeOfRawData) )
@@ -195,12 +170,14 @@ ULONG RVA2FOA(DWORD ulRVA, PIMAGE_NT_HEADERS32 pNTHeader, IMAGE_SECTION_HEADER* 
     }
     return 0;
 }
-//64
+
+// 将RVA转换为文件偏移（FOA）
+// 64位版本
 ULONG RVA2FOA(DWORD ulRVA, PIMAGE_NT_HEADERS64 pNTHeader, IMAGE_SECTION_HEADER* SectionHeaders )
 {
-
     int local = 0;
     
+    // 遍历所有节头，找到包含该RVA的节
     for(int i = 0; i < pNTHeader->FileHeader.NumberOfSections; i++)
     {
         if ( (ulRVA >= SectionHeaders[i].VirtualAddress) && (ulRVA <= SectionHeaders[i].VirtualAddress + SectionHeaders[i].SizeOfRawData) )
@@ -211,28 +188,11 @@ ULONG RVA2FOA(DWORD ulRVA, PIMAGE_NT_HEADERS64 pNTHeader, IMAGE_SECTION_HEADER* 
     return 0;
 }
 
-
-//32 bit
-//DWORD VAtoFileOffset(UINT32 VA, UINT32 ImageBase)
-//{
-//
-//	//first convert to RVA
-//	DWORD RVA = VAtoRVA(VA, ImageBase);
-// 
-//	PIMAGE_NT_HEADERS32 pNTHeader = (PIMAGE_NT_HEADERS32)(NTdata);
-//
-//	IMAGE_SECTION_HEADER* SectionHeaders = (IMAGE_SECTION_HEADER*)(SectionHeadersData);
-//
-//	DWORD result = RVA2FOA(RVA, pNTHeader, SectionHeaders);
-// 
-//    return result;
-//
-//}
-//64
+// 将VA转换为文件偏移
+// 64位版本
 DWORD VAtoFileOffset(duint VA, duint ImageBase)
 {
-
-	//first convert to RVA
+	// 首先转换为RVA
 	DWORD RVA = VAtoRVA(VA, ImageBase);
 
 #if defined( _WIN64 )
@@ -246,22 +206,19 @@ DWORD VAtoFileOffset(duint VA, duint ImageBase)
 	DWORD result = RVA2FOA(RVA, pNTHeader, SectionHeaders);
  
     return result;
-
 }
 
-
-//Read the NT headers and the sections data after it into 2 buffers
+// 读取NT头和其后的节数据到2个缓冲区中
 void InitModuleNTData()
 {
-	
-	//Get target module name
+	// 获取目标模块名称
 	char module[MAX_MODULE_SIZE] = "";
 	ZeroMemory(&module,sizeof(module));
 	GetWindowTextA(GetDlgItem(TracerWHandle, IDC_EDITModule), module, sizeof(module));
 
-	//get target module base
+	// 获取目标模块基址
 	duint TargetImageBase = DbgModBaseFromName(module);
-	//check if we could the target module base ?
+	// 检查是否能获取目标模块基址
 	if(TargetImageBase > 0)
 	{
 		IsFileOffsetPossible = true;
@@ -272,81 +229,61 @@ void InitModuleNTData()
 		return;
 	}
 
-	//Free memory first 
+	// 先释放内存
 	free(SectionHeadersData);
 	
-	//Read 2 buffers only once when the start button is clicked !
+	// 只在点击开始按钮时读取2个缓冲区一次
 
 #if defined( _WIN64 )
 	
-	//get DOS Headers pointer
+	// 获取DOS头指针
 	unsigned char DOSbuffer [0x40];
 	DbgMemRead( TargetImageBase , DOSbuffer, 0x40);
 
 	PIMAGE_DOS_HEADER DOS = (PIMAGE_DOS_HEADER)(DOSbuffer);
 
-
-	//NT headers offset
+	// NT头偏移
 	duint addr = (TargetImageBase + DOS->e_lfanew);
 	DbgMemRead( addr , NTdata, NT64dataSize);
  
 	PIMAGE_NT_HEADERS64 pNTHeader = (PIMAGE_NT_HEADERS64)(NTdata);
  
-
-	// X
+	// 节的数量
 	int NumebrOfSections = pNTHeader->FileHeader.NumberOfSections;
-	// X * 40 
+	// 节数量 * 40字节（每个节头的大小）
 	int sectionsDataSize = NumebrOfSections * NTSectionSize;
 
-	//create dynamic buffer to hold section headers data
+	// 创建动态缓冲区来保存节头数据
 	SectionHeadersData = (unsigned char*)malloc(sectionsDataSize);
 	DbgMemRead(addr + NT64dataSize, SectionHeadersData, sectionsDataSize);
 
 #else
 
-	
-	//get DOS Headers pointer
+	// 获取DOS头指针
 	unsigned char DOSbuffer [0x40];
 	DbgMemRead( TargetImageBase , DOSbuffer, 0x40);
 
 	PIMAGE_DOS_HEADER DOS = (PIMAGE_DOS_HEADER)(DOSbuffer);
 
-	//NT headers offset
+	// NT头偏移
 	duint addr = (TargetImageBase + DOS->e_lfanew);
 	DbgMemRead(addr, NTdata, NT32dataSize);
  
 	PIMAGE_NT_HEADERS32 pNTHeader = (PIMAGE_NT_HEADERS32)(NTdata);
  
-
-	// X
+	// 节的数量
 	int NumebrOfSections = pNTHeader->FileHeader.NumberOfSections;
-	// X * 40 
+	// 节数量 * 40字节（每个节头的大小）
 	int sectionsDataSize = NumebrOfSections * NTSectionSize;
 
-	//create dynamic buffer to hold section headers data
+	// 创建动态缓冲区来保存节头数据
 	SectionHeadersData = (unsigned char*)malloc(sectionsDataSize);
 	DbgMemRead(addr + NT32dataSize, SectionHeadersData, sectionsDataSize);
 
 #endif
-
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//Compare two char arrays ignoring case
+// 比较两个字符数组，忽略大小写
 bool iequals(const string& a, const string& b)
 {
 	unsigned int sz = a.size();
@@ -358,85 +295,57 @@ bool iequals(const string& a, const string& b)
 	return true;
 }
 
-//Show the GUI
+// 显示GUI界面
 void ShowForm(HINSTANCE hInstance, HINSTANCE hPrevInstance)
 {
-
 	_plugin_logprintf("IsFileOffsetPossible : [%d] !\n", IsFileOffsetPossible);
 
-	//Global variable
+	// 全局变量
 	hInst = hInstance;
 
-	//Prepare main dialog Icon
+	// 准备主对话框图标
 	main_icon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_ICON1));
 
-	// Show dialog!
+	// 显示对话框
 	DialogBox(hInstance, MAKEINTRESOURCE(IDD_DIALOGMain), 0, &DialogProc );
-
 }
 
-//Set the current Target module name in the text box
+// 在文本框中设置当前目标模块名称
 void TrySetTargetModule()
 {
-
 	try
 	{
 		CHAR buffer[MAX_MODULE_SIZE];
 
-		//get Current RIP
+		// 获取当前RIP（指令指针）
 		duint entry = GetContextData(UE_CIP);
 
 		DbgGetModuleAt(entry, buffer);
 
 		SetWindowTextA(GetDlgItem(TracerWHandle, IDC_EDITModule), buffer );
-
-
 	}
 	catch (exception& e)
 	{
-		
-		_plugin_logprintf("[%s] : TrySetTargetModule failed !\n", plugin_name);
-
+		_plugin_logprintf("[%s] : TrySetTargetModule 失败 !\n", plugin_name);
 	}
-
 }
 
-//Update the label which views number of events
+// 更新显示事件数量的标签
 void UpdateCountLabel()
 {
-
 	CHAR buffer[20];
 
-	//get Current RIP
+	// 获取事件数量
 	int count = Events.size();
 
 	itoa(count,buffer, 10);
 
 	SetWindowTextA(GetDlgItem(TracerWHandle, IDC_STATIC_Count), buffer );
-
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// 单步执行定时器回调函数
 VOID CALLBACK TimerProcSingleStep(HWND hWnd, UINT nMsg, UINT nIDEvent, DWORD dwTime) 
 {
-
 	KillTimer(hWnd, nIDEvent);
 
 	if(!LoggingActive)
@@ -447,9 +356,9 @@ VOID CALLBACK TimerProcSingleStep(HWND hWnd, UINT nMsg, UINT nIDEvent, DWORD dwT
 	DbgCmdExec("eSingleStep");
 }
 
+// 步过执行定时器回调函数
 VOID CALLBACK TimerProcStepOut(HWND hWnd, UINT nMsg, UINT nIDEvent, DWORD dwTime) 
 {
-
 	KillTimer(hWnd, nIDEvent);
 
 	if(!LoggingActive)
@@ -460,240 +369,205 @@ VOID CALLBACK TimerProcStepOut(HWND hWnd, UINT nMsg, UINT nIDEvent, DWORD dwTime
 	DbgCmdExec("eStepOver");
 }
 
+// 主回调函数 - 处理调试器事件
 void MyCallBack (CBTYPE cbType, void* callbackinfo)
 {
- 
-
-	// If logging is not active then return !
+	// 如果日志记录未激活则返回
 	if( !LoggingActive )
 	{
 		return;
 	}
 
-	//If the form was closed then return !
-	//Means plugin is not in use.
+	// 如果窗体已关闭则返回
+	// 意味着插件未在使用中
 	if( !FormDisplayed )
 	{
 		return;
 	}
 
-
-	//get Current RIP
+	// 获取当前RIP（指令指针）
 	duint entry = GetContextData(UE_CIP);
 
-	if(entry == EndVA)
-	{
+	// 检查是否到达结束VA
+	if(entry == EndVA) {
 		GuiUpdateEnable(true);
 		LoggingActive = false;
-		MessageBoxW(hwndDlg, L"END of tracing reached" , MessageBoxTitle, MB_ICONINFORMATION);
+		MessageBoxW(hwndDlg, L"已到达追踪结束点" , MessageBoxTitle, MB_ICONINFORMATION);
 		return;
-
 	}
 
-
-	//Current Module name
+	// 当前模块名称
 	char module[MAX_MODULE_SIZE] = "";
 
 	switch(cbType)
 	{
-
-	case CB_STEPPED:
-
-		//Now depending on the module we are in, we should choose the right command.
+	case CB_STEPPED:  // 单步执行事件
+		// 根据我们当前所在的模块，选择正确的命令
 
 		if (DbgGetModuleAt(entry,module))
 		{
 			if(LoggingActive == true)
 			{
-				//compare current module with our target module ?
+				// 比较当前模块与目标模块
 				if ( iequals(string(module), TaregtModule) )
 				{
-					//disassemble current line 
+					// 反汇编当前行
 					BASIC_INSTRUCTION_INFO basicinfo;
 					DbgDisasmFastAt(entry, &basicinfo);
 
-					//we will ignore calls, only log jmps
+					// 我们将忽略调用，只记录跳转
 					if ((basicinfo.branch))// && !(basicinfo.call)))
 					{
-
 						char disasm[GUI_MAX_DISASSEMBLY_SIZE] = "";
 						GuiGetDisassembly(entry, disasm);
 
 						bool IsTaken = DbgIsJumpGoingToExecute(entry);
 
-						//File offset
+						// 文件偏移
 						duint ImageBase = DbgModBaseFromName(module);
 						duint FileOffset = ConvertVAtoFileOffset(ImageBase, entry, false);
 
-						//
-						//char instr[GUI_MAX_DISASSEMBLY_SIZE] = "";
-						//DbgAssembleAt(entry, instr);
-
-						//
 						char Data[2048] = "";
  
 						string Row;
 						if(basicinfo.call)
 						{
+							// 调用指令格式
 							Row = Int64ToHexString(entry) + "\t\t" + Int32ToHexString( VAtoRVA(entry, ImageBase)) + "\t\t" + (IsFileOffsetPossible ? Int32ToHexString( VAtoFileOffset(entry, ImageBase)) : Int32ToHexString( 0)) + "\t\t" + "\t-->\t\t\t\t"  + string(basicinfo.instruction);
 						}
 						else
 						{
+							// 跳转指令格式（显示是否执行）
 							Row = Int64ToHexString(entry) + "\t\t" + Int32ToHexString( VAtoRVA(entry, ImageBase)) + "\t\t" + (IsFileOffsetPossible ? Int32ToHexString( VAtoFileOffset(entry, ImageBase)) : Int32ToHexString( 0)) + "\t\t" + (IsTaken ? "\tYes\t\t\t\t" : "\tNot\t\t\t\t") + string(basicinfo.instruction);
 						}
 
 						Events.push_back(Row);
-
 						UpdateCountLabel();
-
 					}
 				}
 
-				//branch destination
+				// 分支目标地址
 				duint destination = DbgGetBranchDestination(entry);
 
-				//branch destination module
+				// 分支目标模块
 				char DestModule[MAX_MODULE_SIZE] = "";
 				DbgGetModuleAt(destination,DestModule);
 
-				//compare current module with our target module ?
-				//internal jmp ?
+				// 比较当前模块与目标模块
+				// 内部跳转？
 				if ( iequals(string(module), TaregtModule) )
 				{
-					//we are inside our target module so step into
+					// 我们在目标模块内部，所以单步进入
 					UINT_PTR TimerId = SetTimer(hwndDlg, 0, TimerStepMs, (TIMERPROC)TimerProcSingleStep);
-
 				}
-				else//
+				else
 				{
-
-					//we are outside the target module !
+					// 我们在目标模块外部
 					if(iequals(TaregtModule , DestModule))
 					{
-						//If the branch goes back to our target module then step into
+						// 如果分支回到目标模块，则单步进入
 						UINT_PTR TimerId = SetTimer(hwndDlg, 0, TimerStepMs, (TIMERPROC)TimerProcSingleStep);
 					}
 					else
-					{	//If the jmp goes somewhere else then step over it
+					{
+						// 如果跳转到其他地方，则步过它
 						UINT_PTR TimerId = SetTimer(hwndDlg, 0, TimerStepMs, (TIMERPROC)TimerProcStepOut);
 					}
 
-					//After this the stepping event won't be fired
-					//we will face the PasuedDebug event there
-
+					// 此后单步事件不会被触发
+					// 我们将面临PausedDebug事件
 				}
 			}
 		}
 		else
 		{
-			//execute till return in this unknown module !
+			// 在这个未知模块中执行直到返回！
 			//UINT_PTR TimerId = SetTimer(hwndDlg, 0, TimerStepMs, (TIMERPROC)TimerProcStepOut);
 			//UINT_PTR TimerId = SetTimer(hwndDlg, 0, TimerStepMs, (TIMERPROC)TimerProcSingleStep);
 			//UINT_PTR TimerId = SetTimer(hwndDlg, 0, 10, (TIMERPROC)TimerProcStepOut);
 		}
-
 		break;
 
-	case CB_BREAKPOINT:
-
+	case CB_BREAKPOINT:  // 断点事件
 		{
 
 		}
 		break;
 
-	case CB_PAUSEDEBUG:
+	case CB_PAUSEDEBUG:  // 暂停调试事件
 		{
-
-			//disassemble current line 
+			// 反汇编当前行
 			//BASIC_INSTRUCTION_INFO basicinfo;
 			//DbgDisasmFastAt(entry, &basicinfo);
 
-			//Are we at a "RET" instruction ?
+			// 我们是否在"RET"指令处？
 			//if( iequals( string(basicinfo.instruction) , "RET"))
 			//{
-				//DO a single step !
-
+				// 执行单步
 				//UINT_PTR TimerId = SetTimer(hwndDlg, 0, 10, (TIMERPROC)TimerProcSingleStep);
-
 			//}
-
 		}
 		break;
 
-
-	case CB_RESUMEDEBUG:
-
+	case CB_RESUMEDEBUG:  // 恢复调试事件
 		break;
-
 	}
-
 }
 
-// Main Dialog Procedure
+// 主对话框过程
 INT_PTR CALLBACK DialogProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
-
-	
-
 	switch (uMsg)
 	{
-
-
-	case WM_INITDIALOG:
+	case WM_INITDIALOG:  // 对话框初始化
 		{
-			//Save the dialog window handle
+			// 保存对话框窗口句柄
 			TracerWHandle = hWnd;
 
-			//Set the flag
+			// 设置标志
 			FormDisplayed = true;
 
-			//Set dialog icon
+			// 设置对话框图标
 			SendMessage (hWnd, WM_SETICON, WPARAM (ICON_SMALL), LPARAM (main_icon));
 
-			//Set the initial target module name if possible !
+			// 如果可能，设置初始目标模块名称
 			TrySetTargetModule();
-
 		}
 
-
-		// +- BUTTON ROUTINES -+
+		// +- 按钮例程 -+
 	case WM_COMMAND:
 		{
-
 			switch (LOWORD(wParam))
 			{
-
-			case IDC_START:
+			case IDC_START:  // 开始按钮
 				{
-
 					if(!DbgIsDebugging())
 					{
-						MessageBoxW(hWnd, (L"You need to be debugging to use this !"), MessageBoxTitle , MB_OK | MB_ICONHAND);
+						MessageBoxW(hWnd, (L"您需要在调试状态下使用此功能！"), MessageBoxTitle , MB_OK | MB_ICONHAND);
 					}
 					else if(!CheckENDAddress(hWnd))
 					{
-						MessageBoxW(hWnd, (L"Invalid END Address !"), MessageBoxTitle , MB_OK | MB_ICONHAND);
+						MessageBoxW(hWnd, (L"无效的结束地址！"), MessageBoxTitle , MB_OK | MB_ICONHAND);
 					}
 					else if(!CheckModuleName(hWnd))
 					{
-						MessageBoxW(hWnd, (L"Invalid target module name !"), MessageBoxTitle, MB_OK | MB_ICONHAND);
+						MessageBoxW(hWnd, (L"无效的目标模块名称！"), MessageBoxTitle, MB_OK | MB_ICONHAND);
 					}
-					else//Can go !
+					else  // 可以开始
 					{
-						//read the target module NT header info !
+						// 读取目标模块的NT头信息
 						InitModuleNTData();
 
 						LoggingActive = true;
 
 						DbgCmdExec("sst");
 					}
-
 				}
 				break;
 
-			case IDC_CHECKGUI:
+			case IDC_CHECKGUI:  // GUI复选框
 				{
-					//Check box was clicked so decide what to do ?
+					// 复选框被点击，决定要做什么
 					if(ShouldDisableGUI())
 					{
 						GuiUpdateDisable();
@@ -702,39 +576,32 @@ INT_PTR CALLBACK DialogProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 					{
 						GuiUpdateEnable(true);
 					}
-
 				}
 				break;
 
-			case IDC_FLUSH:
+			case IDC_FLUSH:  // 清空按钮
 				{
-
 					Events.clear();
 					UpdateCountLabel();
-
 				}
 				break;
 
-			case IDC_SAVE:
+			case IDC_SAVE:  // 保存按钮
 				{
-
-
 					if(Events.size() < 1)
 					{
-						MessageBoxW(hwndDlg, L"Logging buffer is empty !", MessageBoxTitle, MB_ICONHAND);
+						MessageBoxW(hwndDlg, L"日志缓冲区为空！", MessageBoxTitle, MB_ICONHAND);
 					}
 					else
 					{
-						//suspend the debugee
+						// 暂停被调试进程
 						DbgCmdExec("pause");
 
 						char szFileName[MAX_PATH];
 						ZeroMemory(szFileName, MAX_PATH);
 						if(SaveFileDialog(szFileName))
 						{
-
-
-							//print the header
+							// 打印表头
 							string Row;
  
 							Row = "VA\t\t\t\tRVA\t\t\tOffset\t\t\tStatus\t\t\tInsturction";
@@ -745,36 +612,30 @@ INT_PTR CALLBACK DialogProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 							Outfile << Row << endl;
 							Outfile << "-----------------------------------------------------------------------------------------" << endl;
 
+							// 写入所有事件
 							for(int t=0;t< Events.size();++t)
 							{
 								Outfile << Events[t] << endl;
 							}
 
-							MessageBoxW(hwndDlg, L"Log file saved !", MessageBoxTitle, MB_ICONINFORMATION);
-
+							MessageBoxW(hwndDlg, L"日志文件已保存！", MessageBoxTitle, MB_ICONINFORMATION);
 						}
-
 					}
-
 				}
 				break;
-
-
 			}
 		}
 		break;
 
-
-	case WM_CLOSE:
+	case WM_CLOSE:  // 窗口关闭
 		{
-
-			//If GUI was locked then unlock it at exit !
+			// 如果GUI被锁定，则在退出时解锁
 			if(ShouldDisableGUI)
 			{
 				GuiUpdateEnable(true);
 			}
 
-			//Clean and reset !
+			// 清理和重置
 			hInst = NULL;
 			main_icon = NULL;
 
@@ -786,7 +647,6 @@ INT_PTR CALLBACK DialogProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			EndVA = 0;
 			TracerWHandle = 0;
 
-
 			DestroyIcon(main_icon);
 			DestroyWindow(hWnd);
 		}
@@ -794,33 +654,11 @@ INT_PTR CALLBACK DialogProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 		return (DefWindowProc(hWnd, uMsg, wParam, lParam));
 	}
-	//prevents closing the dialog !
+	// 防止关闭对话框
 	return FALSE;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//Called when the plugin menu is clicked !
+// 当插件菜单被点击时调用
 extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENTRY* info)
 {
 	switch(info->hEntry)
@@ -829,18 +667,18 @@ extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENT
 		{
 			if(!DbgIsDebugging())
 			{
-				MessageBoxW(hwndDlg, (L"You need to be debugging to use this !"), MessageBoxTitle , MB_OK | MB_ICONHAND);
+				MessageBoxW(hwndDlg, (L"您需要在调试状态下使用此功能！"), MessageBoxTitle , MB_OK | MB_ICONHAND);
 				//_plugin_logputs("you need to be debugging to use this command");
 				return;
 			}
-			//If form is still displayed then bring it to front !
+			// 如果窗体仍在显示，则将其置于前台
 			if(FormDisplayed)
 			{
 				BringWindowToTop(TracerWHandle);
 				return;
 			}
 
-			//Show the form if debugger is on !
+			// 如果调试器开启，显示窗体
 			ShowForm(GetModuleHandleA(plugin_DLLname),NULL);
 		}
 		break;
@@ -854,7 +692,6 @@ extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENT
 	case MENU_Save:
 		{
 
-
 		}
 		break;
 
@@ -866,30 +703,29 @@ extern "C" __declspec(dllexport) void CBMENUENTRY(CBTYPE cbType, PLUG_CB_MENUENT
 	}
 }
 
-//Called when a new debugging session starts !
+// 当新的调试会话开始时调用
 extern "C" __declspec(dllexport) void CBINITDEBUG(CBTYPE cbType, PLUG_CB_INITDEBUG* info)
 {
-	_plugin_logprintf("[TEST] debugging of file %s started!\n", (const char*)info->szFileName);
+	_plugin_logprintf("[TEST] 开始调试文件 %s !\n", (const char*)info->szFileName);
 }
 
-//Called when a debugging session ends
+// 当调试会话结束时调用
 extern "C" __declspec(dllexport) void CBSTOPDEBUG(CBTYPE cbType, PLUG_CB_STOPDEBUG* info)
 {
-	_plugin_logputs("[TEST] debugging stopped!");
+	_plugin_logputs("[TEST] 调试已停止!");
 }
 
-
+// 测试命令处理函数
 bool cbTestCommand(int argc, char* argv[])
 {
-	//Show an input box !
+	// 显示输入框
 	char line[GUI_MAX_LINE_SIZE] = "";
 	if(!GuiGetLineWindow("Enter VA", line))
 	{
-		_plugin_logputs("[TEST] cancel pressed!");
+		_plugin_logputs("[TEST] 已按下取消!");
 	}
 	else
 	{
-
 		duint VA = DbgValFromString(line);
 		
 		char module[MAX_MODULE_SIZE] = "";
@@ -900,67 +736,53 @@ bool cbTestCommand(int argc, char* argv[])
 
 		DWORD RVA = VAtoRVA(VA, ImageBase);
 
-
-		//_plugin_logprintf("[TEST] VA : \"%s\"\n", Int64ToHexString(VA));
-		//_plugin_logprintf("[TEST] module : \"%s\"\n", module);
-		//_plugin_logprintf("[TEST] ImageBase : \"%s\"\n", Int64ToHexString(ImageBase));
-
-		_plugin_logprintf("[TEST] VA to RVA : \"%d\"\n", RVA);
-
+		_plugin_logprintf("[TEST] VA 转 RVA : \"%d\"\n", RVA);
 	}
 
 	return true;
 }
 
-//Initialize plugin with host
+// 使用主机初始化插件
 void testInit(PLUG_INITSTRUCT* initStruct)
 {
-	//This will print the plugin handle in the log screen
+	// 这将在日志屏幕中打印插件句柄
 	//_plugin_logprintf("[TEST] pluginHandle: %d\n", pluginHandle);
 
-
-	//Register a command "ktracer" which can be written in the command text box
-	//The command will be handled in the Method "cbTestCommand"
+	// 注册一个"ktracer"命令，可以在命令文本框中写入
+	// 该命令将在方法"cbTestCommand"中处理
 	if(!_plugin_registercommand(pluginHandle, plugin_command, cbTestCommand, false))
 	{
-		_plugin_logputs("[TEST] error registering the \"ktracer\" command!");
+		_plugin_logputs("[TEST] 注册\"ktracer\"命令时出错!");
 	}
-
-
 }
 
-//Called when closing the host !
+// 当关闭主机时调用
 void testStop()
 {
-
 	_plugin_unregistercommand(pluginHandle, plugin_command);
 
 	_plugin_menuclear(hMenu);
 
 	EndDialog(TracerWHandle, NULL);
-
 }
 
-//Called once after the "init" event
+// 在"init"事件之后调用一次
 void testSetup()
 {
-	//Set the menu icon
+	// 设置菜单图标
 	ICONDATA rocket;
 	rocket.data = icon_rocket;
 	rocket.size = sizeof(icon_rocket);
 
 	_plugin_menuseticon(hMenu, &rocket);
 
-	//Set the menus
-	_plugin_menuaddentry(hMenu, MENU_Start, "&Start logging...");
-	//_plugin_menuaddentry(hMenu, MENU_Stop, "&Stop loging");
-	//_plugin_menuaddentry(hMenu, MENU_Save, "&Save to text file...");
-	//_plugin_menuaddentry(hMenu, MENU_Abandon, "&Clear logging buffer");
+	// 设置菜单
+	_plugin_menuaddentry(hMenu, MENU_Start, "&开始记录...");
+	//_plugin_menuaddentry(hMenu, MENU_Stop, "&停止记录");
+	//_plugin_menuaddentry(hMenu, MENU_Save, "&保存到文本文件...");
+	//_plugin_menuaddentry(hMenu, MENU_Abandon, "&清空记录缓冲区");
 
-
-	//Register debugging events callback
+	// 注册调试事件回调
 	_plugin_registercallback(pluginHandle, CB_STEPPED, MyCallBack);
 	_plugin_registercallback(pluginHandle, CB_PAUSEDEBUG, MyCallBack);
-
-
 }
